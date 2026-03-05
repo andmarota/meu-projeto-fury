@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard TC — Visão Mensal</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f4f6f9; color: #333; padding: 24px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 13px; margin-bottom: 28px; }
+    .card { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+    thead tr th { background: #1565C0; color: #fff; padding: 10px 16px; text-align: center; font-weight: 600; }
+    thead tr th:first-child { text-align: left; background: #0D47A1; min-width: 220px; }
+    tbody tr td { padding: 10px 16px; border-bottom: 1px solid #f0f0f0; text-align: right; }
+    tbody tr td:first-child { text-align: left; font-weight: 600; color: #444; background: #fafafa; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #e3f2fd; }
+    tbody tr:hover td:first-child { background: #e3f2fd; }
+    .loading { color: #999; text-align: center; padding: 40px; font-size: 14px; }
+    .error { color: #e53935; padding: 20px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>Dashboard TC — Visão Mensal</h1>
+  <p class="subtitle">Fonte: SBOX_CREDITSTC.BT_CCARD_CADASTRAL_20 | Filtro: Brasil (MLB), FL_CANCELADO = 0</p>
+
+  <div class="card">
+    <div id="container"><p class="loading">Carregando dados do BigQuery...</p></div>
+  </div>
+
+  <script>
+    const METRICAS = [
+      { key: 'clientes_unicos',   label: 'Clientes únicos (CUS_CUST_ID distinct)' },
+      { key: 'total_registros',   label: 'Total registros (com duplicidades)'      },
+      { key: 'limite_medio',      label: 'Limite médio (CCARD_LIMIT_GENERAL)'      },
+      { key: 'clientes_com_tpv',  label: 'Clientes com TPV_TOTAL > 0'             },
+    ];
+
+    function fmt(key, val) {
+      if (val === null || val === undefined) return '—';
+      if (key === 'limite_medio') return 'R$ ' + Number(val).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+      return Number(val).toLocaleString('pt-BR');
+    }
+
+    function fmtMes(dateStr) {
+      const [y, m] = dateStr.split('-');
+      const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+      return `${meses[parseInt(m)-1]}/${y}`;
+    }
+
+    async function load() {
+      const container = document.getElementById('container');
+      try {
+        const res = await fetch('/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql: `
+            SELECT
+              FORMAT_DATE('%Y-%m-%d', TIM_MONTH) AS tim_month,
+              COUNT(DISTINCT CUS_CUST_ID)        AS clientes_unicos,
+              COUNT(CUS_CUST_ID)                 AS total_registros,
+              ROUND(AVG(CAST(CCARD_LIMIT_GENERAL AS FLOAT64)), 2) AS limite_medio,
+              COUNTIF(TPV_TOTAL > 0)             AS clientes_com_tpv
+            FROM \`meli-bi-data.SBOX_CREDITSTC.BT_CCARD_CADASTRAL_20\`
+            WHERE SIT_SITE_ID = 'MLB'
+              AND FL_CANCELADO = 0
+              AND TIM_MONTH >= '2025-01-01'
+            GROUP BY TIM_MONTH
+            ORDER BY TIM_MONTH
+          ` })
+        });
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const rows = data.rows;
+        if (!rows.length) { container.innerHTML = '<p class="error">Nenhum dado encontrado.</p>'; return; }
+
+        const meses = rows.map(r => r.tim_month);
+
+        let html = '<table><thead><tr><th>Métrica</th>';
+        meses.forEach(m => html += `<th>${fmtMes(m)}</th>`);
+        html += '</tr></thead><tbody>';
+
+        METRICAS.forEach(({ key, label }) => {
+          html += `<tr><td>${label}</td>`;
+          rows.forEach(r => html += `<td>${fmt(key, r[key])}</td>`);
+          html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+      } catch(e) {
+        container.innerHTML = `<p class="error">Erro: ${e.message}</p>`;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

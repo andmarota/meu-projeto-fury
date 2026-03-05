@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard - Cartão de Crédito</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f4f6f9; color: #333; padding: 24px; }
+    h1 { font-size: 24px; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 14px; margin-bottom: 32px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .card { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 16px; margin-bottom: 16px; color: #444; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { background: #f0f0f0; text-align: left; padding: 8px 12px; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+    tr:last-child td { border-bottom: none; }
+    .loading { color: #999; font-size: 14px; text-align: center; padding: 32px 0; }
+    .error { color: #e53935; font-size: 14px; padding: 16px 0; }
+    @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Dashboard — Cartão de Crédito MLB</h1>
+  <p class="subtitle">Fonte: meli-bi-data.WHOWNER.BT_CCARD_CADASTRAL</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Contas por Status</h2>
+      <canvas id="chartStatus"></canvas>
+      <p id="loadingStatus" class="loading">Carregando...</p>
+    </div>
+
+    <div class="card">
+      <h2>Contas por Bandeira</h2>
+      <canvas id="chartBrand"></canvas>
+      <p id="loadingBrand" class="loading">Carregando...</p>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>Tabela — Top Bandeiras</h2>
+      <div id="tableContainer"><p class="loading">Carregando...</p></div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchQuery(sql) {
+      const res = await fetch('/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return data.rows;
+    }
+
+    async function loadChartStatus() {
+      const el = document.getElementById('loadingStatus');
+      try {
+        const rows = await fetchQuery(`
+          SELECT CCARD_ACCOUNT_STATUS_TYPE AS status, COUNT(*) AS total
+          FROM \`meli-bi-data.WHOWNER.BT_CCARD_CADASTRAL\`
+          GROUP BY status ORDER BY total DESC LIMIT 10
+        `);
+        el.style.display = 'none';
+        new Chart(document.getElementById('chartStatus'), {
+          type: 'bar',
+          data: {
+            labels: rows.map(r => r.status || 'N/A'),
+            datasets: [{
+              label: 'Contas',
+              data: rows.map(r => r.total),
+              backgroundColor: '#1976D2'
+            }]
+          },
+          options: { responsive: true, plugins: { legend: { display: false } } }
+        });
+      } catch(e) {
+        el.className = 'error';
+        el.textContent = 'Erro: ' + e.message;
+      }
+    }
+
+    async function loadChartBrand() {
+      const el = document.getElementById('loadingBrand');
+      try {
+        const rows = await fetchQuery(`
+          SELECT CCARD_BRAND AS brand, COUNT(*) AS total
+          FROM \`meli-bi-data.WHOWNER.BT_CCARD_CADASTRAL\`
+          GROUP BY brand ORDER BY total DESC LIMIT 10
+        `);
+        el.style.display = 'none';
+        const colors = ['#1976D2','#43A047','#FB8C00','#E53935','#8E24AA','#00ACC1','#FFB300','#6D4C41','#546E7A','#D81B60'];
+        new Chart(document.getElementById('chartBrand'), {
+          type: 'doughnut',
+          data: {
+            labels: rows.map(r => r.brand || 'N/A'),
+            datasets: [{
+              data: rows.map(r => r.total),
+              backgroundColor: colors
+            }]
+          },
+          options: { responsive: true }
+        });
+      } catch(e) {
+        el.className = 'error';
+        el.textContent = 'Erro: ' + e.message;
+      }
+    }
+
+    async function loadTable() {
+      const container = document.getElementById('tableContainer');
+      try {
+        const rows = await fetchQuery(`
+          SELECT
+            CCARD_BRAND AS bandeira,
+            CCARD_ACCOUNT_STATUS_TYPE AS status,
+            COUNT(*) AS total_contas,
+            ROUND(AVG(CAST(CCARD_LIMIT_GENERAL AS FLOAT64)), 2) AS limite_medio
+          FROM \`meli-bi-data.WHOWNER.BT_CCARD_CADASTRAL\`
+          GROUP BY bandeira, status
+          ORDER BY total_contas DESC
+          LIMIT 20
+        `);
+        container.innerHTML = `
+          <table>
+            <thead><tr><th>Bandeira</th><th>Status</th><th>Total Contas</th><th>Limite Médio</th></tr></thead>
+            <tbody>
+              ${rows.map(r => `
+                <tr>
+                  <td>${r.bandeira || 'N/A'}</td>
+                  <td>${r.status || 'N/A'}</td>
+                  <td>${r.total_contas.toLocaleString('pt-BR')}</td>
+                  <td>R$ ${(r.limite_medio || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        container.innerHTML = '<p class="error">Erro: ' + e.message + '</p>';
+      }
+    }
+
+    loadChartStatus();
+    loadChartBrand();
+    loadTable();
+  </script>
+</body>
+</html>
